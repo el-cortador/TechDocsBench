@@ -21,7 +21,7 @@ else:
     print(f"Key loaded (starts with {OPENROUTER_API_KEY[:8]}...)")
 
 # --- 2. ЗАГРУЗКА ПРОМПТА ---
-def load_system_prompt(file_path="data/sys_prompt.md"):
+def load_system_prompt(file_path="sys_prompt.md"):
     if not os.path.exists(file_path):
         print(f"WARNING: File {file_path} not found. Using default prompt.")
         return "You are a technical writer."
@@ -45,11 +45,9 @@ semaphore = asyncio.Semaphore(3)
 
 def encode_image(image_path):
     try:
-        # Adjust path to look in the data directory
-        adjusted_path = os.path.join('data', image_path)
-        if not os.path.exists(adjusted_path):
+        if not os.path.exists(image_path):
             return None
-        with open(adjusted_path, "rb") as image_file:
+        with open(image_path, "rb") as image_file:
             return base64.b64encode(image_file.read()).decode('utf-8')
     except Exception as e:
         print(f"Error encoding image {image_path}: {e}")
@@ -78,10 +76,8 @@ async def get_model_response(session, model_id, instruction, input_data):
             else:
                 return f"ERROR: Image missing at {input_str}"
         elif input_str.endswith(".md"):
-            # Adjust path to look in the data directory
-            adjusted_path = os.path.join('data', input_str)
-            if os.path.exists(adjusted_path):
-                with open(adjusted_path, 'r', encoding='utf-8') as f:
+            if os.path.exists(input_str):
+                with open(input_str, 'r', encoding='utf-8') as f:
                     user_content.append({"type": "text", "text": f"SPECIFICATION:\n{f.read()}"})
             else:
                 return f"ERROR: MD file missing at {input_str}"
@@ -109,35 +105,35 @@ async def get_model_response(session, model_id, instruction, input_data):
             return f"CONNECTION ERROR: {str(e)}"
 
 async def process_dataset():
-    dataset_path = "data/benchmark_final_v4.jsonl"
-
+    dataset_path = "benchmark_final_v4.jsonl"
+    
     if not os.path.exists(dataset_path):
         print(f"ERROR: Dataset file {dataset_path} not found!")
         return
 
     with open(dataset_path, 'r', encoding='utf-8') as f:
         items = [json.loads(line) for line in f]
-
+    
     print(f"Dataset loaded: {len(items)} examples.")
 
     async with aiohttp.ClientSession() as session:
         for model_id in MODELS_TO_TEST:
             model_short_name = model_id.split('/')[-1]
-            output_path = f"results/results_{model_short_name}.jsonl"
-
+            output_path = f"results_{model_short_name}.jsonl"
+            
             print(f"--- Launching: {model_id} ---")
-
+            
             tasks = [get_model_response(session, model_id, item['instruction'], item['input']) for item in items]
-
+            
             responses = await tqdm.gather(*tasks, desc=f"Testing {model_short_name}")
-
+            
             with open(output_path, 'w', encoding='utf-8') as out_f:
                 for item, ai_answer in zip(items, responses):
                     result = item.copy()
                     result['model_output'] = ai_answer
                     result['model_name'] = model_id
                     out_f.write(json.dumps(result, ensure_ascii=False) + '\n')
-
+            
             print(f"Results saved to {output_path}")
 
 if __name__ == "__main__":
