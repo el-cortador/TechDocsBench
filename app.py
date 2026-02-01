@@ -9,43 +9,47 @@ st.set_page_config(layout="centered", page_title="TechDocsBench: Human Review")
 
 log_file = "human_eval_results.csv"
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+# --- УЛУЧШЕННАЯ ФУНКЦИЯ ОБРАБОТКИ ТЕКСТА ---
 
-def smart_fix_markdown(text, is_api=False):
+def clean_markdown(text, is_api=False):
     """
-    Интеллектуальное исправление.
-    Для API (is_api=True) - щадящий режим, чтобы не ломать таблицы.
-    Для остальных - стандартный режим для списков.
+    Построчная обработка текста для исправления списков без поломки таблиц.
     """
     if not isinstance(text, str): return text
     
-    # Общая очистка для всех
-    for sym in ['●', '○', '•', '·']:
-        text = text.replace(sym, '- ')
-    text = text.replace('\t', ' ')
-
-    if is_api:
-        # Для API только гарантируем пустую строку ПЕРЕД таблицей, если её нет
-        # Это часто чинит рендеринг таблиц в Streamlit
-        text = re.sub(r'([^\n])\n\|', r'\1\n\n|', text)
-    else:
-        # Для обычных текстов - фиксим слипшиеся списки
-        text = re.sub(r'([^\n])\s+-\s+', r'\1\n\n- ', text)
-        text = re.sub(r'([^\n])\s+(\d+\.)\s+', r'\1\n\n\2 ', text)
-        text = re.sub(r'([^\n])\n(-|\d+\.)', r'\1\n\n\2', text)
+    lines = text.split('\n')
+    cleaned_lines = []
     
-    # Общая финальная очистка
-    text = re.sub(r' +', ' ', text)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
+    in_code_block = False
+    
+    for line in lines:
+        stripped = line.strip()
+        
+        # Следим за блоками кода
+        if stripped.startswith('```'):
+            in_code_block = not in_code_block
+            cleaned_lines.append(line)
+            continue
+            
+        if in_code_block:
+            cleaned_lines.append(line)
+            continue
 
-def get_evaluated_ids():
-    if os.path.exists(log_file):
-        try:
-            df = pd.read_csv(log_file)
-            return df['example_id'].unique().tolist()
-        except: return []
-    return []
+        # 1. Заменяем спец-буллиты на стандартные только вне таблиц
+        if not stripped.startswith('|'):
+            for sym in ['●', '○', '•', '·']:
+                line = line.replace(sym, '- ')
+        
+        # 2. Если это API-кейс, мы крайне осторожны с дефисами
+        if not is_api:
+            # Исправляем ситуацию, когда список прилип к тексту сверху
+            if stripped.startswith('- ') or re.match(r'^\d+\.', stripped):
+                if cleaned_lines and cleaned_lines[-1].strip() != "":
+                    cleaned_lines.append("") # Добавляем пустую строку перед списком
+        
+        cleaned_lines.append(line)
+        
+    return "\n".join(cleaned_lines)
 
 @st.cache_data
 def load_all_results():
@@ -87,7 +91,12 @@ data, model_labels, case_nav, ordered_ids = load_all_results()
 
 # --- САЙДБАР ---
 st.sidebar.title("Выбор кейсов")
-evaluated_ids = get_evaluated_ids()
+if os.path.exists(log_file):
+    try:
+        evaluated_ids = pd.read_csv(log_file)['example_id'].unique().tolist()
+    except: evaluated_ids = []
+else: evaluated_ids = []
+
 default_index = 0
 for i, ex_id in enumerate(ordered_ids):
     if ex_id not in evaluated_ids:
@@ -98,54 +107,48 @@ def label_maker(ex_id):
     status = "✅" if ex_id in evaluated_ids else "⏳"
     return f"{status} {case_nav[ex_id]}: {data[ex_id]['title']}"
 
-selected_id = st.sidebar.selectbox("Кейс", ordered_ids, index=default_index, format_func=label_maker)
+selected_id = st.sidebar.selectbox("Пример", ordered_ids, index=default_index, format_func=label_maker)
 
 st.sidebar.divider()
-st.sidebar.subheader("Выгрузка результатов")
 if os.path.exists(log_file):
     with open(log_file, "rb") as file:
-        st.sidebar.download_button("Скачать CSV", file, "results.csv", "text/csv")
+        st.sidebar.download_button("📥 Скачать результаты", file, "results.csv", "text/csv")
 
-# --- ВЕРХНИЙ БЛОК: ИСХОДНЫЕ ДАННЫЕ ---
+# --- КОНТЕНТ ---
 item = data[selected_id]
-is_api_task = (item['task'] == 'api_gen')
+is_api = (item['task'] == 'api_gen')
 st.title(f"{case_nav[selected_id]}: {item['title']}")
 
 if item['task'] == 'rewriting':
-    st.subheader("Исходный текст")
-    with st.container(border=True):
-        st.markdown(smart_fix_markdown(item['reference']))
+    st.subheader("✅ Исходный текст")
+    st.markdown(clean_markdown(item['reference']))
 else:
-    t1, t2 = st.tabs(["Артефакт (скриншот/эндпоинт))", "Исходный текст"])
+    t1, t2 = st.tabs(["📥 Артефакт", "✅ Исходный текст"])
     with t1:
         path = item['input'].replace('\\\\', '/').replace('\\', '/').strip()
         if path.lower().endswith('.png'):
-            if os.path.exists(path):
-                st.image(path, width=1300)
-                st.caption("Нажмите для увеличения")
-            else: st.error("Image missing")
+            st.image(path, use_container_width=True) # Картинка на всю ширину вкладки
         elif path.lower().endswith('.md'):
-            if os.path.exists(path):
-                with open(path, 'r', encoding='utf-8') as f:
-                    st.code(f.read(), language='markdown')
+            with open(path, 'r', encoding='utf-8') as f:
+                st.code(f.read(), language='markdown')
         else: st.info(path)
     with t2:
-        st.markdown(smart_fix_markdown(item['reference'], is_api=is_api_task))
+        st.markdown(clean_markdown(item['reference'], is_api=is_api))
 
 st.divider()
 
-# --- СРЕДНИЙ БЛОК: РЕЗУЛЬТАТЫ ГЕНЕРАЦИИ ---
-st.subheader("Результаты генерации")
+st.subheader("🤖 Ответы моделей")
 for m_name in sorted(list(item['outputs'].keys())):
     label = model_labels[m_name]
     with st.expander(f"📄 {label}", expanded=True):
-        st.markdown(smart_fix_markdown(item['outputs'][m_name], is_api=is_api_task))
+        # Показываем ПОЛНЫЙ текст без обрезания
+        st.markdown(clean_markdown(item['outputs'][m_name], is_api=is_api))
 
 st.divider()
 
-# --- НИЖНЯЯ ПАНЕЛЬ: ОЦЕНКА ---
-st.subheader("Панель оценки")
+# --- ФОРМА ---
 with st.form(key=f"f_{selected_id}"):
+    st.write("Оценка (1-5):")
     criteria = ["Ясность", "Точность", "Полнота", "Единообразие", "Структура", "Избыточность"]
     available_models = sorted(list(item['outputs'].keys()))
     
@@ -154,19 +157,19 @@ with st.form(key=f"f_{selected_id}"):
     for i, m_name in enumerate(available_models):
         cols[i+1].write(f"**{model_labels[m_name]}**")
     
-    scores_to_save = {}
+    scores = {}
     for crit in criteria:
         r = st.columns([1.5] + [1]*len(available_models))
         r[0].write(crit)
         for i, m_name in enumerate(available_models):
-            if m_name not in scores_to_save: scores_to_save[m_name] = {}
-            scores_to_save[m_name][crit] = r[i+1].selectbox("B", [1,2,3,4,5], index=4, key=f"s_{selected_id}_{m_name}_{crit}", label_visibility="collapsed")
+            if m_name not in scores: scores[m_name] = {}
+            scores[m_name][crit] = r[i+1].selectbox("B", [1,2,3,4,5], index=4, key=f"s_{selected_id}_{m_name}_{crit}", label_visibility="collapsed")
             
     comment = st.text_area("Комментарий", key=f"comm_{selected_id}")
     if st.form_submit_button("🚀 Сохранить оценки"):
         recs = []
-        for m_name, scs in scores_to_save.items():
-            d = {"example_id": selected_id, "model_label": model_labels[m_name], "real_model": m_name, "comment": comment}
+        for m_name, scs in scores.items():
+            d = {"example_id": selected_id, "model": m_name, "comment": comment}
             d.update(scs)
             recs.append(d)
         pd.DataFrame(recs).to_csv(log_file, mode='a', index=False, header=not os.path.exists(log_file))
