@@ -3,3 +3,9 @@ pandas
 PyGithub
 Pillow
 requests
+rouge-score
+bert-score
+torch
+transformers
+aiohttp
+tqdm
