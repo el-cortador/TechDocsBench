@@ -110,9 +110,29 @@ def label_maker(ex_id):
 selected_id = st.sidebar.selectbox("Пример", ordered_ids, index=default_index, format_func=label_maker)
 
 st.sidebar.divider()
+st.sidebar.subheader("Выгрузка результатов")
+
+log_file = "human_eval_results.csv"
+
 if os.path.exists(log_file):
+    # Читаем файл в память для скачивания
     with open(log_file, "rb") as file:
-        st.sidebar.download_button("📥 Скачать результаты", file, "results.csv", "text/csv")
+        st.sidebar.download_button(
+            label="Скачать CSV с оценками",
+            data=file,
+            file_name="benchmark_results_export.csv",
+            mime="text/csv",
+            help="Нажмите, чтобы выгрузить все накопленные оценки коллег."
+        )
+    
+    # Кнопка очистки (чтобы начать заново, если нужно)
+    if st.sidebar.button("Удалить текущие оценки", type="secondary"):
+        if st.sidebar.checkbox("Я подтверждаю удаление файла на сервере"):
+            os.remove(log_file)
+            st.rerun()
+else:
+    st.sidebar.info("Оценок пока нет. Файл появится после первого сохранения.")
+
 
 # --- КОНТЕНТ ---
 item = data[selected_id]
@@ -120,10 +140,10 @@ is_api = (item['task'] == 'api_gen')
 st.title(f"{case_nav[selected_id]}: {item['title']}")
 
 if item['task'] == 'rewriting':
-    st.subheader("✅ Исходный текст")
+    st.subheader("Исходный текст")
     st.markdown(clean_markdown(item['reference']))
 else:
-    t1, t2 = st.tabs(["📥 Артефакт", "✅ Исходный текст"])
+    t1, t2 = st.tabs(["Скриншот/API-ручка", "Исходный текст"])
     with t1:
         path = item['input'].replace('\\\\', '/').replace('\\', '/').strip()
         if path.lower().endswith('.png'):
@@ -137,10 +157,10 @@ else:
 
 st.divider()
 
-st.subheader("🤖 Ответы моделей")
+st.subheader("Ответы моделей")
 for m_name in sorted(list(item['outputs'].keys())):
     label = model_labels[m_name]
-    with st.expander(f"📄 {label}", expanded=True):
+    with st.expander(f"{label}", expanded=True):
         # Показываем ПОЛНЫЙ текст без обрезания
         st.markdown(clean_markdown(item['outputs'][m_name], is_api=is_api))
 
@@ -166,7 +186,7 @@ with st.form(key=f"f_{selected_id}"):
             scores[m_name][crit] = r[i+1].selectbox("B", [1,2,3,4,5], index=4, key=f"s_{selected_id}_{m_name}_{crit}", label_visibility="collapsed")
             
     comment = st.text_area("Комментарий", key=f"comm_{selected_id}")
-    if st.form_submit_button("🚀 Сохранить оценки"):
+    if st.form_submit_button("Сохранить оценки"):
         recs = []
         for m_name, scs in scores.items():
             d = {"example_id": selected_id, "model": m_name, "comment": comment}
