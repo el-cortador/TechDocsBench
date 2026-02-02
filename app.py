@@ -3,6 +3,7 @@ import json
 import os
 import pandas as pd
 import re
+from github import Github
 
 # Настройка страницы
 st.set_page_config(layout="centered", page_title="TechDocsBench: Human Review")
@@ -195,3 +196,42 @@ with st.form(key=f"f_{selected_id}"):
         pd.DataFrame(recs).to_csv(log_file, mode='a', index=False, header=not os.path.exists(log_file))
         st.cache_data.clear()
         st.rerun()
+
+# ФУНКЦИЯ ПЕРМАНЕНТНОГО СОХРАНЕНИЯ В GITHUB ---
+def save_to_github(df_new):
+    """Дописывает данные в CSV файл прямо в репозитории GitHub"""
+    try:
+        token = st.secrets["GITHUB_TOKEN"]
+        repo_name = st.secrets["GITHUB_REPO"]
+        file_path = "human_eval_results.csv"
+        
+        g = Github(token)
+        repo = g.get_repo(repo_name)
+        
+        try:
+            # Пытаемся получить существующий файл
+            file_content = repo.get_contents(file_path, ref="main")
+            old_csv_content = file_content.decoded_content.decode('utf-8')
+            # Объединяем старые данные с новыми
+            updated_csv = old_csv_content + "\n" + df_new.to_csv(index=False, header=False)
+            
+            repo.update_file(
+                path=file_path,
+                message=f"Update eval: {pd.Timestamp.now()}",
+                content=updated_csv,
+                sha=file_content.sha,
+                branch="main"
+            )
+        except:
+            # Если файла еще нет — создаем его
+            csv_content = df_new.to_csv(index=False)
+            repo.create_file(
+                path=file_path, 
+                message="Initial eval file", 
+                content=csv_content, 
+                branch="main"
+            )
+        return True
+    except Exception as e:
+        st.error(f"GitHub Error: {e}")
+        return False
