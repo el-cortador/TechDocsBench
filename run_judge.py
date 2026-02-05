@@ -18,7 +18,7 @@ if sys.platform == "win32":
 # Загрузка настроек
 load_dotenv()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
-JUDGE_MODEL = "google/gemini-2.5-flash"
+JUDGE_MODEL = "google/gemini-2.5-pro"
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 semaphore = asyncio.Semaphore(3)
@@ -124,9 +124,12 @@ async def run_full_audit():
                 
                 if j_eval and "scores" in j_eval:
                     row.update({
+                        "j_clarity": j_eval['scores'].get('clarity', 0),
                         "j_accuracy": j_eval['scores'].get('accuracy', 0),
                         "j_completeness": j_eval['scores'].get('completeness', 0),
-                        "j_style": j_eval['scores'].get('style', 0),
+                        "j_structure": j_eval['scores'].get('structure', 0),
+                        "j_uniformity": j_eval['scores'].get('uniformity', 0),
+                        "j_redundance": j_eval['scores'].get('redundance', 0),
                         "j_hallucinations": j_eval['scores'].get('hallucinations', 0),
                         "j_markdown": j_eval['scores'].get('markdown', 0),
                         "j_critique": j_eval.get('critique', "")
