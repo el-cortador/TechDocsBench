@@ -17,8 +17,14 @@
 
 ```json
 {
-"scores": {"accuracy": 5, "completeness": 5, "info_style": 5, "no_hallucinations": 5, "markdown": 5},
-"total_avg": 5.0,
+"scores": {
+    "accuracy": 5,
+    "completeness": 5,
+    "infostyle": 5,
+    "hallucinations": 5,
+    "markdown": 5,
+    "total_avg": 5.0
+    },
 "critique": "Краткий технический разбор: что хорошо, что плохо.",
 "errors_found": ["список конкретных ошибок, галлюцинаций или лишних слов"]
 }
