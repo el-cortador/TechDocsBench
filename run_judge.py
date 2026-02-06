@@ -11,9 +11,6 @@ from bert_score import score as bert_score_func
 
 load_dotenv()
 
-# ----------------------------
-# OpenRouter config
-# ----------------------------
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 if not OPENROUTER_API_KEY:
     raise RuntimeError("OPENROUTER_API_KEY is not set")
@@ -34,9 +31,7 @@ JUDGE_SCORE_KEYS = [
     "markdown",
 ]
 
-# ----------------------------
 # Prompt loading
-# ----------------------------
 def load_text(path: str) -> str:
     if not os.path.exists(path):
         raise FileNotFoundError(f"File not found: {path}")
@@ -45,10 +40,7 @@ def load_text(path: str) -> str:
 
 JUDGE_SYSTEM_PROMPT = load_text("judge_prompt.md")
 
-
-# ----------------------------
 # Readability (RU)
-# ----------------------------
 def count_syllables_ru(text: str) -> int:
     return len(re.findall(r"[аеёиоуыэюя]", text.lower()))
 
@@ -67,10 +59,7 @@ def calculate_readability(text: str):
     fog = 0.4 * (asl + phw)
     return round(flesch, 2), round(fog, 2)
 
-
-# ----------------------------
 # Robust JSON extraction + validation
-# ----------------------------
 def _strip_code_fences(s: str) -> str:
     s = s.strip()
     s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.IGNORECASE)
@@ -79,14 +68,14 @@ def _strip_code_fences(s: str) -> str:
 
 def extract_json_object(text: str) -> dict:
     """
-    Извлечь JSON-объект из ответа модели, даже если вокруг есть текст.
+    Extracts a JSON object from the model response, even if there is text around it.
     """
     if not text:
         raise ValueError("Empty judge response")
 
     t = _strip_code_fences(text)
 
-    # 1) прямой парсинг
+    # 1) direct parsing
     try:
         obj = json.loads(t)
         if isinstance(obj, dict):
@@ -94,7 +83,7 @@ def extract_json_object(text: str) -> dict:
     except Exception:
         pass
 
-    # 2) поиск первого сбалансированного {...}
+    # 2) search for the first balanced {...}
     start = t.find("{")
     if start == -1:
         raise ValueError("No '{' found in judge response")
@@ -116,8 +105,8 @@ def extract_json_object(text: str) -> dict:
 
 def normalize_score(v):
     """
-    Нормализуем в int 1..5.
-    Принимаем int/float/строки "4", "4.0", "4/5".
+    Normalizes to int 1..5.
+    Accepts int/float/strings "4", "4.0", "4/5".
     """
     if v is None:
         return None
@@ -136,10 +125,10 @@ def normalize_score(v):
 
 def validate_judge_payload(obj: dict):
     """
-    Требуем:
-      - scores: dict с ключами JUDGE_SCORE_KEYS
-      - critique: str (может быть пустой)
-    Возвращаем: (normalized_obj, missing_keys)
+    Requires:
+    - scores: dict with keys JUDGE_SCORE_KEYS
+    - critique: str (may be empty)
+    Returns: (normalized_obj, missing_keys)
     """
     if not isinstance(obj, dict):
         raise ValueError("Judge JSON is not an object")
@@ -179,10 +168,7 @@ def make_repair_message(missing_keys, previous_text: str):
 def make_full_schema():
     return {"scores": {k: "integer 1..5" for k in JUDGE_SCORE_KEYS}, "critique": "string"}
 
-
-# ----------------------------
 # OpenRouter call (sync) + async wrapper
-# ----------------------------
 def openrouter_chat(messages, *, temperature=0.1, max_tokens=1200, timeout=90):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -194,8 +180,6 @@ def openrouter_chat(messages, *, temperature=0.1, max_tokens=1200, timeout=90):
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
-        # Просим вернуть JSON, если бэкенд модели поддерживает.
-        # В OpenRouter это прокидывается к провайдеру; если не поддерживает — модель может игнорировать.
         "response_format": {"type": "json_object"},
     }
 
@@ -206,13 +190,9 @@ def openrouter_chat(messages, *, temperature=0.1, max_tokens=1200, timeout=90):
     return data["choices"][0]["message"]["content"]
 
 async def openrouter_chat_async(messages, **kwargs):
-    # requests синхронный → гоняем в thread
     return await asyncio.to_thread(openrouter_chat, messages, **kwargs)
 
-
-# ----------------------------
 # Judge logic with repair
-# ----------------------------
 async def call_judge(reference: str, model_output: str, input_artifact: str, max_repairs: int = 2):
     user_msg = (
         f"INPUT ARTEFACT: {input_artifact}\n\n"
@@ -232,7 +212,7 @@ async def call_judge(reference: str, model_output: str, input_artifact: str, max
                 last_raw_text = await openrouter_chat_async(messages, temperature=0.1, max_tokens=1200, timeout=120)
             except Exception as e:
                 if attempt < max_repairs:
-                    # перезапросим с тем же контекстом (мог быть transient)
+                    # re-request with the same context (could be transient)
                     continue
                 return {
                     "ok": False,
@@ -243,7 +223,7 @@ async def call_judge(reference: str, model_output: str, input_artifact: str, max
                     "error": f"OpenRouter error: {repr(e)}",
                 }
 
-        # 1) попытка извлечь + нормализовать
+        # 1) try to extract and normalize
         try:
             obj = extract_json_object(last_raw_text)
             normalized, missing = validate_judge_payload(obj)
@@ -258,7 +238,7 @@ async def call_judge(reference: str, model_output: str, input_artifact: str, max
                     "error": "",
                 }
 
-            # 2) repair по недостающим ключам
+            # 2) repair on missing keys
             if attempt < max_repairs:
                 repair_msg = make_repair_message(missing, last_raw_text)
                 messages = [
@@ -279,7 +259,7 @@ async def call_judge(reference: str, model_output: str, input_artifact: str, max
             }
 
         except Exception as e:
-            # 3) JSON не извлечён — repair
+            # 3) repair if JSON isn't extracted
             if attempt < max_repairs:
                 repair_msg = (
                     "Твой прошлый ответ не является валидным JSON.\n"
@@ -306,10 +286,7 @@ async def call_judge(reference: str, model_output: str, input_artifact: str, max
                 "error": f"Parse error after repairs: {repr(e)}",
             }
 
-
-# ----------------------------
 # Full audit
-# ----------------------------
 async def run_full_audit():
     results_files = [f for f in os.listdir(".") if f.startswith("results_") and f.endswith(".jsonl")]
     all_rows = []

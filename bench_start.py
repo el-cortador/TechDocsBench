@@ -6,11 +6,11 @@ import aiohttp
 from tqdm.asyncio import tqdm
 from dotenv import load_dotenv
 
-# --- 1. ИНИЦИАЛИЗАЦИЯ ---
+# --- 1. Initialization ---
 print(">>> Script starting...")
 load_dotenv()
 
-# Очистка ключа от случайных пробелов или кавычек
+# Cleaning api key from occasional spaces or quotes
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip().replace('"', '').replace("'", "")
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -20,7 +20,7 @@ if not OPENROUTER_API_KEY:
 else:
     print(f"Key loaded (starts with {OPENROUTER_API_KEY[:8]}...)")
 
-# --- 2. ЗАГРУЗКА ПРОМПТА ---
+# --- 2. Prompt uploading ---
 def load_system_prompt(file_path="sys_prompt.md"):
     if not os.path.exists(file_path):
         print(f"WARNING: File {file_path} not found. Using default prompt.")
@@ -31,7 +31,7 @@ def load_system_prompt(file_path="sys_prompt.md"):
 
 SYSTEM_PROMPT = load_system_prompt()
 
-# РЕАЛЬНЫЕ ID моделей для OpenRouter
+# Model IDs for OpenRouter
 MODELS_TO_TEST = [
     "openai/gpt-5.2",
     "anthropic/claude-opus-4.5",
@@ -40,7 +40,7 @@ MODELS_TO_TEST = [
     "meta-llama/llama-4-maverick"
 ]
 
-# Ограничение одновременных запросов
+# Limiting simultaneous requests
 semaphore = asyncio.Semaphore(3)
 
 def encode_image(image_path):
@@ -64,7 +64,7 @@ async def get_model_response(session, model_id, instruction, input_data):
 
         user_content = [{"type": "text", "text": instruction}]
 
-        # Логика обработки входа
+        # Entry processing
         input_str = str(input_data)
         if input_str.endswith(".png"):
             base64_image = encode_image(input_str)

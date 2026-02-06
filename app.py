@@ -3,18 +3,17 @@ import json
 import os
 import pandas as pd
 import re
-from github import Github
 
-# Настройка страницы
+# Page settings
 st.set_page_config(layout="centered", page_title="TechDocsBench: Human Review")
 
 log_file = "human_eval_results.csv"
 
-# --- УЛУЧШЕННАЯ ФУНКЦИЯ ОБРАБОТКИ ТЕКСТА ---
+# --- TEXT PARSING FUNCTION ---
 
 def clean_markdown(text, is_api=False):
     """
-    Построчная обработка текста для исправления списков без поломки таблиц.
+    Parsing text sentence-by-sentence and correcting lists without affecting tables.
     """
     if not isinstance(text, str): return text
     
@@ -26,7 +25,6 @@ def clean_markdown(text, is_api=False):
     for line in lines:
         stripped = line.strip()
         
-        # Следим за блоками кода
         if stripped.startswith('```'):
             in_code_block = not in_code_block
             cleaned_lines.append(line)
@@ -36,17 +34,17 @@ def clean_markdown(text, is_api=False):
             cleaned_lines.append(line)
             continue
 
-        # 1. Заменяем спец-буллиты на стандартные только вне таблиц
+        # 1. Replace special bullets with standard ones only outside tables
         if not stripped.startswith('|'):
             for sym in ['●', '○', '•', '·']:
                 line = line.replace(sym, '- ')
         
-        # 2. Если это API-кейс, мы крайне осторожны с дефисами
+        # 2. If not an API case, be careful with hyphens
         if not is_api:
-            # Исправляем ситуацию, когда список прилип к тексту сверху
+            # Correcting if the list is stuck in the text above
             if stripped.startswith('- ') or re.match(r'^\d+\.', stripped):
                 if cleaned_lines and cleaned_lines[-1].strip() != "":
-                    cleaned_lines.append("") # Добавляем пустую строку перед списком
+                    cleaned_lines.append("") # Adding a blank string before the list
         
         cleaned_lines.append(line)
         
@@ -90,7 +88,7 @@ def load_all_results():
 
 data, model_labels, case_nav, ordered_ids = load_all_results()
 
-# --- САЙДБАР ---
+# --- SIDEBAR ---
 st.sidebar.title("Выбор кейсов")
 if os.path.exists(log_file):
     try:
@@ -116,7 +114,7 @@ st.sidebar.subheader("Выгрузка результатов")
 log_file = "human_eval_results.csv"
 
 if os.path.exists(log_file):
-    # Читаем файл в память для скачивания
+    # Reading file into memory for downloading
     with open(log_file, "rb") as file:
         st.sidebar.download_button(
             label="Скачать CSV с оценками",
@@ -126,7 +124,7 @@ if os.path.exists(log_file):
             help="Нажмите, чтобы выгрузить все накопленные оценки коллег."
         )
     
-    # Кнопка очистки (чтобы начать заново, если нужно)
+    # Clear button (to restart assessing)
     if st.sidebar.button("Удалить текущие оценки", type="secondary"):
         if st.sidebar.checkbox("Я подтверждаю удаление файла на сервере"):
             os.remove(log_file)
@@ -135,7 +133,7 @@ else:
     st.sidebar.info("Оценок пока нет. Файл появится после первого сохранения.")
 
 
-# --- КОНТЕНТ ---
+# --- CONTENT ---
 item = data[selected_id]
 is_api = (item['task'] == 'api_gen')
 st.title(f"{case_nav[selected_id]}: {item['title']}")
@@ -148,7 +146,7 @@ else:
     with t1:
         path = item['input'].replace('\\\\', '/').replace('\\', '/').strip()
         if path.lower().endswith('.png'):
-            st.image(path, use_container_width=True) # Картинка на всю ширину вкладки
+            st.image(path, use_container_width=True)
         elif path.lower().endswith('.md'):
             with open(path, 'r', encoding='utf-8') as f:
                 st.code(f.read(), language='markdown')
@@ -162,12 +160,12 @@ st.subheader("Ответы моделей")
 for m_name in sorted(list(item['outputs'].keys())):
     label = model_labels[m_name]
     with st.expander(f"{label}", expanded=True):
-        # Показываем ПОЛНЫЙ текст без обрезания
+        # Showing FULL text
         st.markdown(clean_markdown(item['outputs'][m_name], is_api=is_api))
 
 st.divider()
 
-# --- ФОРМА ---
+# --- INPUT FORM ---
 with st.form(key=f"f_{selected_id}"):
     st.write("Оценка (1-5):")
     criteria = ["Ясность", "Точность", "Полнота", "Единообразие", "Структура", "Избыточность"]
@@ -196,42 +194,3 @@ with st.form(key=f"f_{selected_id}"):
         pd.DataFrame(recs).to_csv(log_file, mode='a', index=False, header=not os.path.exists(log_file))
         st.cache_data.clear()
         st.rerun()
-
-# ФУНКЦИЯ ПЕРМАНЕНТНОГО СОХРАНЕНИЯ В GITHUB ---
-def save_to_github(df_new):
-    """Дописывает данные в CSV файл прямо в репозитории GitHub"""
-    try:
-        token = st.secrets["GITHUB_TOKEN"]
-        repo_name = st.secrets["GITHUB_REPO"]
-        file_path = "human_eval_results.csv"
-        
-        g = Github(token)
-        repo = g.get_repo(repo_name)
-        
-        try:
-            # Пытаемся получить существующий файл
-            file_content = repo.get_contents(file_path, ref="main")
-            old_csv_content = file_content.decoded_content.decode('utf-8')
-            # Объединяем старые данные с новыми
-            updated_csv = old_csv_content + "\n" + df_new.to_csv(index=False, header=False)
-            
-            repo.update_file(
-                path=file_path,
-                message=f"Update eval: {pd.Timestamp.now()}",
-                content=updated_csv,
-                sha=file_content.sha,
-                branch="main"
-            )
-        except:
-            # Если файла еще нет — создаем его
-            csv_content = df_new.to_csv(index=False)
-            repo.create_file(
-                path=file_path, 
-                message="Initial eval file", 
-                content=csv_content, 
-                branch="main"
-            )
-        return True
-    except Exception as e:
-        st.error(f"GitHub Error: {e}")
-        return False
