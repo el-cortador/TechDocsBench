@@ -1,16 +1,26 @@
+import asyncio
 import json
 import os
-import base64
-import asyncio
-import aiohttp
-from tqdm.asyncio import tqdm
-from dotenv import load_dotenv
+from pathlib import Path
+from typing import Optional
 
-# --- 1. ИНИЦИАЛИЗАЦИЯ ---
+import aiohttp
+from dotenv import load_dotenv
+from tqdm.asyncio import tqdm
+
+from techdocsbench import encode_image_to_base64, load_system_prompt
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+DATA_DIR = BASE_DIR / "data"
+DATASET_PATH = DATA_DIR / "datasets" / "benchmark_final_v4.jsonl"
+PROMPTS_DIR = BASE_DIR / "prompts"
+RESULTS_DIR = DATA_DIR / "results"
+
+# --- 1. Initialization ---
 print(">>> Script starting...")
 load_dotenv()
 
-# Очистка ключа от случайных пробелов или кавычек
+# Cleaning api key from occasional spaces or quotes
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip().replace('"', '').replace("'", "")
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -20,18 +30,10 @@ if not OPENROUTER_API_KEY:
 else:
     print(f"Key loaded (starts with {OPENROUTER_API_KEY[:8]}...)")
 
-# --- 2. ЗАГРУЗКА ПРОМПТА ---
-def load_system_prompt(file_path="sys_prompt.md"):
-    if not os.path.exists(file_path):
-        print(f"WARNING: File {file_path} not found. Using default prompt.")
-        return "You are a technical writer."
-    with open(file_path, "r", encoding="utf-8") as f:
-        print(f"System prompt loaded from {file_path}")
-        return f.read().strip()
+# --- 2. Prompt uploading ---
+SYSTEM_PROMPT = load_system_prompt(PROMPTS_DIR / "sys_prompt.md")
 
-SYSTEM_PROMPT = load_system_prompt()
-
-# РЕАЛЬНЫЕ ID моделей для OpenRouter
+# Model IDs for OpenRouter
 MODELS_TO_TEST = [
     "openai/gpt-5.2",
     "anthropic/claude-opus-4.5",
@@ -40,18 +42,23 @@ MODELS_TO_TEST = [
     "meta-llama/llama-4-maverick"
 ]
 
-# Ограничение одновременных запросов
+# Limiting simultaneous requests
 semaphore = asyncio.Semaphore(3)
 
-def encode_image(image_path):
-    try:
-        if not os.path.exists(image_path):
-            return None
-        with open(image_path, "rb") as image_file:
-            return base64.b64encode(image_file.read()).decode('utf-8')
-    except Exception as e:
-        print(f"Error encoding image {image_path}: {e}")
+def resolve_input_path(raw_path: str) -> Optional[Path]:
+    if not raw_path:
         return None
+    normalized = Path(str(raw_path).replace("\\\\", "/").replace("\\", "/")).expanduser()
+    candidates = [
+        normalized,
+        BASE_DIR / normalized,
+        DATA_DIR / normalized,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
 
 async def get_model_response(session, model_id, instruction, input_data):
     async with semaphore:
@@ -64,10 +71,12 @@ async def get_model_response(session, model_id, instruction, input_data):
 
         user_content = [{"type": "text", "text": instruction}]
 
-        # Логика обработки входа
+        # Entry processing
         input_str = str(input_data)
-        if input_str.endswith(".png"):
-            base64_image = encode_image(input_str)
+        lower = input_str.lower()
+        if lower.endswith(".png"):
+            artifact_path = resolve_input_path(input_str)
+            base64_image = encode_image_to_base64(artifact_path) if artifact_path else None
             if base64_image:
                 user_content.append({
                     "type": "image_url",
@@ -75,9 +84,10 @@ async def get_model_response(session, model_id, instruction, input_data):
                 })
             else:
                 return f"ERROR: Image missing at {input_str}"
-        elif input_str.endswith(".md"):
-            if os.path.exists(input_str):
-                with open(input_str, 'r', encoding='utf-8') as f:
+        elif lower.endswith(".md"):
+            artifact_path = resolve_input_path(input_str)
+            if artifact_path:
+                with artifact_path.open('r', encoding='utf-8') as f:
                     user_content.append({"type": "text", "text": f"SPECIFICATION:\n{f.read()}"})
             else:
                 return f"ERROR: MD file missing at {input_str}"
@@ -105,13 +115,11 @@ async def get_model_response(session, model_id, instruction, input_data):
             return f"CONNECTION ERROR: {str(e)}"
 
 async def process_dataset():
-    dataset_path = "benchmark_final_v4.jsonl"
-    
-    if not os.path.exists(dataset_path):
-        print(f"ERROR: Dataset file {dataset_path} not found!")
+    if not DATASET_PATH.exists():
+        print(f"ERROR: Dataset file {DATASET_PATH} not found!")
         return
 
-    with open(dataset_path, 'r', encoding='utf-8') as f:
+    with DATASET_PATH.open('r', encoding='utf-8') as f:
         items = [json.loads(line) for line in f]
     
     print(f"Dataset loaded: {len(items)} examples.")
@@ -119,7 +127,8 @@ async def process_dataset():
     async with aiohttp.ClientSession() as session:
         for model_id in MODELS_TO_TEST:
             model_short_name = model_id.split('/')[-1]
-            output_path = f"results_{model_short_name}.jsonl"
+            RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+            output_path = RESULTS_DIR / f"results_{model_short_name}.jsonl"
             
             print(f"--- Launching: {model_id} ---")
             
@@ -127,7 +136,7 @@ async def process_dataset():
             
             responses = await tqdm.gather(*tasks, desc=f"Testing {model_short_name}")
             
-            with open(output_path, 'w', encoding='utf-8') as out_f:
+            with output_path.open('w', encoding='utf-8') as out_f:
                 for item, ai_answer in zip(items, responses):
                     result = item.copy()
                     result['model_output'] = ai_answer
