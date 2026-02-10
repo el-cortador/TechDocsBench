@@ -11,7 +11,6 @@ data/
   images/            # скриншоты интерфейса
   datasets/          # исходные JSONL с заданиями
   results/           # результаты генераций и CSV с оценками
-docs/specs.md        # техническое задание
 prompts/             # sys_prompt.md и judge_prompt.md
 src/
   app.py             # Streamlit UI
