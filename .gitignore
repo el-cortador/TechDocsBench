@@ -18,11 +18,6 @@ env/
 *.swp
 *.swo
 
-# --- Benchmark Results (Результаты прогонов ИИ) ---
-# Игнорируем файлы с результатами моделей, чтобы не засорять репу
-results_*.jsonl
-benchmark_final_*.jsonl
-
 # --- Human Evaluation (Оценки коллег) ---
 # Локальные файлы с оценками экспертов
 human_eval_results.csv
