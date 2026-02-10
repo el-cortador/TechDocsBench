@@ -142,7 +142,7 @@ else:
         resolved_path = resolve_artifact_path(raw_path)
         lower = raw_path.lower()
         if resolved_path and lower.endswith(".png"):
-            st.image(str(resolved_path), use_container_width=True)
+            st.image(str(resolved_path), width="stretch")
         elif resolved_path and lower.endswith(".md"):
             with resolved_path.open("r", encoding="utf-8") as f:
                 st.code(f.read(), language="markdown")
